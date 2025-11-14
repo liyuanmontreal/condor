@@ -1,92 +1,124 @@
 # src/rl/fqi_2d.py
-
+# fix budgt version
 import numpy as np
-from sklearn.neural_network import MLPRegressor
 import joblib
+from itertools import product
+from sklearn.neural_network import MLPRegressor
+
 
 class FQI2D:
-    def __init__(self,
-                 release_levels=[0, 5, 10, 15, 20, 25, 30],
-                 mitigation_levels=[0, 1],
-                 gamma=0.99):
-        self.release_levels = release_levels
-        self.mitigation_levels = mitigation_levels
+    """
+    简单 Fitted Q-Iteration，用于 1D 状态 + 2D 动作（release, mitigation）
+
+    数据格式要求 DataFrame 列：
+      - state_N
+      - release
+      - mitigation
+      - reward
+      - next_N
+    """
+
+    def __init__(
+        self,
+        release_levels=None,
+        mitigation_levels=None,
+        hidden_layer_sizes=(64, 64),
+        gamma=0.97,
+        random_state=0,
+    ):
+        if release_levels is None:
+            release_levels = [15, 20, 25]
+        if mitigation_levels is None:
+            mitigation_levels = [0, 1]
+
+        self.release_levels = list(release_levels)
+        self.mitigation_levels = list(mitigation_levels)
         self.gamma = gamma
 
-        # Q-function approximator
         self.model = MLPRegressor(
-            hidden_layer_sizes=(64, 64),
-            activation='relu',
+            hidden_layer_sizes=hidden_layer_sizes,
+            activation="relu",
+            solver="adam",
             max_iter=500,
-            random_state=0
+            random_state=random_state,
         )
 
-        self.fitted = False
+    # ---------- 内部辅助：构造 (state, action) 批 ----------
+    def _sa_batch(self, states, releases, mitigations):
+        """
+        states: shape (N,)
+        releases, mitigations: 标量 or shape (N,)
+        返回形状 (N, 3) 的特征 [s, u, e]
+        """
+        s = np.asarray(states).reshape(-1, 1)
+        u = np.asarray(releases).reshape(-1, 1)
+        e = np.asarray(mitigations).reshape(-1, 1)
+        X = np.concatenate([s, u, e], axis=1)
+        return X
 
+    # ---------- 训练 ----------
     def fit(self, df, iterations=30):
+        """
+        df: pandas.DataFrame，包含 state_N, release, mitigation, reward, next_N
+        """
         s = df["state_N"].values.astype(float)
         u = df["release"].values.astype(float)
         e = df["mitigation"].values.astype(float)
         r = df["reward"].values.astype(float)
         s2 = df["next_N"].values.astype(float)
 
-        # Inputs: (s, u, e)
-        X = np.column_stack([s, u, e])
-
-        # Q targets
+        # 初始 Q 目标：直接回归 reward
+        X = self._sa_batch(s, u, e)
         y = r.copy()
 
-        print(f"[INFO] FQI training: {len(df)} samples")
-
         for it in range(iterations):
-            print(f"[FQI] iteration {it+1}/{iterations}")
+            # 拟合当前 Q
+            self.model.fit(X, y)
 
-            # ---- iteration 1: Q(s’) = 0 ----
-            if it == 0:
-                y_target = r.copy()
-            else:
-                # estimate Q(s', a')
-                q_next = []
-                for i in range(len(s2)):
-                    best_q = -1e9
-                    for u2 in self.release_levels:
-                        for e2 in self.mitigation_levels:
-                            q_val = self.model.predict([[s2[i], u2, e2]])[0]
-                            best_q = max(best_q, q_val)
-                    q_next.append(best_q)
+            # 计算下一个状态的 max_a' Q(s', a')
+            q_next_max = []
+            for s_next in s2:
+                q_values = []
+                for u2, e2 in product(self.release_levels, self.mitigation_levels):
+                    X_next = self._sa_batch([s_next], [u2], [e2])
+                    q_val = self.model.predict(X_next)[0]
+                    q_values.append(q_val)
+                q_next_max.append(max(q_values))
+            q_next_max = np.array(q_next_max)
 
-                q_next = np.array(q_next)
-                y_target = r + self.gamma * q_next
+            # 更新 target
+            y = r + self.gamma * q_next_max
 
-            # fit model
-            self.model.fit(X, y_target)
-            self.fitted = True
+            print(f"[FQI] iter {it+1}/{iterations}")
 
-        print("[INFO] FQI training completed!")
+        print("[FQI] Training completed.")
 
-    def save(self, path="outputs/fqi_release_lead.pkl"):
+    # ---------- 策略：给定状态选动作 ----------
+    def select_action(self, state_scalar):
+        """
+        输入：state_scalar（float or int）
+        输出： (release, mitigation)
+        """
+        s_val = float(state_scalar)
+        q_values = []
+        actions = []
+        for u, e in product(self.release_levels, self.mitigation_levels):
+            X = self._sa_batch([s_val], [u], [e])
+            q = self.model.predict(X)[0]
+            q_values.append(q)
+            actions.append((u, e))
+        best_idx = int(np.argmax(q_values))
+        return actions[best_idx]
+
+    # ---------- 保存 / 加载 ----------
+    def save(self, path: str):
         joblib.dump(self, path)
-        print(f"[INFO] Saved FQI model → {path}")
+        print(f"[FQI] Saved model to {path}")
 
-    @staticmethod
-    def load(path="outputs/fqi_release_lead.pkl"):
-        return joblib.load(path)
-
-    def select_action(self, state):
-        """Returns tuple: (release, mitigation)"""
-        if isinstance(state, (tuple, list, np.ndarray)):
-            state_N = float(state[0])
-        else:
-            state_N = float(state)
-
-        best_q = -1e9
-        best_pair = (0, 0)
-
-        for u in self.release_levels:
-            for e in self.mitigation_levels:
-                q = self.model.predict([[state_N, u, e]])[0]
-                if q > best_q:
-                    best_q = q
-                    best_pair = (u, e)
-
-        return best_pair
+    @classmethod
+    def load(cls, path: str):
+        obj = joblib.load(path)
+        if not isinstance(obj, FQI2D):
+            raise TypeError(f"Loaded object from {path} is not FQI2D")
+        print(f"[FQI] Loaded model from {path}")
+        return obj
