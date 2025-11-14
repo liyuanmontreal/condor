@@ -1,43 +1,51 @@
 
 import sys,os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import pandas as pd
-import numpy as np
 from src.rl.condor_env_2d import Condor2DEnv
 
-def simulate_one_step(N, release, mitigation):
-    env = Condor2DEnv(N0=N)
-    obs, info = env.reset()
-    obs2, reward, term, trunc, info = env.step([release, mitigation])
-    next_N = float(obs2[0])
-    return reward, next_N
 
 def main():
-    df = pd.read_csv("data/condor_population_strict.csv")
-    df = df[df["Year"] >= 2011]
+    df_pop = pd.read_csv("data/condor_population_strict.csv")  # must contain Year, Total
+    df_rel = pd.read_csv("data/condor_releases.csv")    # Year, Release
+    df_lead = pd.read_csv("data/lead_mitigation_proxy.csv")  # Year, MitigationLevel(0/1)
 
-    N_list = df["Total"].values.astype(float)
+    # merge
+    df = df_pop.merge(df_rel, on="Year", how="left")
+    df = df.merge(df_lead, on="Year", how="left")
 
-    releases = np.random.randint(0, 20, size=len(N_list)-1)
-    mitigations = np.random.randint(0, 2, size=len(N_list)-1)
+    # fill missing: assume 0 release, mitigation=0 pre-2011
+    df["Release"] = df["Release"].fillna(0)
+    df["Mitigation"] = df["Mitigation"].fillna(0)
 
-    data = []
-    gamma = 0.99
+    # only use 2011-2024 for offline RL
+    df = df[df["Year"] >= 2011].reset_index(drop=True)
 
-    for t in range(len(releases)-1):
-        N = N_list[t]
-        u = releases[t]
-        e = mitigations[t]
+    records = []
+    env = Condor2DEnv()
 
-        reward, nextN = simulate_one_step(N, u, e)
-        target_Q = reward + gamma * abs(nextN - 650) * -1
+    for i in range(len(df) - 1):
+        N_t = df.loc[i, "Total"]
+        u_t = df.loc[i, "Release"]
+        e_t = df.loc[i, "Mitigation"]
+        N_tp1 = df.loc[i + 1, "Total"]
 
-        data.append([N, u, e, target_Q])
+        reward = -abs(N_tp1 - 650) / 50.0
+        reward -= 0.01 * u_t
+        reward += 0.2 * e_t
 
-    df2 = pd.DataFrame(data, columns=["state_N", "release", "mitigation", "target_Q"])
-    df2.to_csv("outputs/rl_dataset_2d.csv", index=False)
+        records.append({
+            "state_N": N_t,
+            "release": u_t,
+            "mitigation": e_t,
+            "reward": reward,
+            "next_N": N_tp1
+        })
 
-    print("[INFO] Dataset saved to outputs/rl_dataset_2d.csv")
+    pd.DataFrame(records).to_csv("outputs/rl_dataset_2d.csv", index=False)
+    print("[INFO] Saved dataset to outputs/rl_dataset_2d.csv")
+
 
 if __name__ == "__main__":
     main()

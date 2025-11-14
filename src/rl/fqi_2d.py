@@ -1,35 +1,85 @@
+# src/rl/fqi_2d.py
+
 import numpy as np
 from sklearn.neural_network import MLPRegressor
+import joblib
 
 class FQI2D:
-    def __init__(self):
+    def __init__(self,
+                 release_levels=[0, 5, 10, 15, 20, 25, 30],
+                 mitigation_levels=[0, 1],
+                 gamma=0.99):
+        self.release_levels = release_levels
+        self.mitigation_levels = mitigation_levels
+        self.gamma = gamma
+
+        # Q-function approximator
         self.model = MLPRegressor(
             hidden_layer_sizes=(64, 64),
+            activation='relu',
             max_iter=500,
-            learning_rate_init=0.001
+            random_state=0
         )
+
         self.fitted = False
 
-        # Discrete action grid
-        self.release_levels = np.arange(0, 21, 1)
-        self.mitigation_levels = np.array([0, 1])
+    def fit(self, df, iterations=30):
+        s = df["state_N"].values.astype(float)
+        u = df["release"].values.astype(float)
+        e = df["mitigation"].values.astype(float)
+        r = df["reward"].values.astype(float)
+        s2 = df["next_N"].values.astype(float)
 
-    # -------------------------------------------
-    def fit(self, df, iterations=25):
-        X = df[["state_N", "release", "mitigation"]].values
-        y = df["target_Q"].values
+        # Inputs: (s, u, e)
+        X = np.column_stack([s, u, e])
 
-        for i in range(iterations):
-            print(f"[FQI] iter {i+1}/{iterations}")
-            self.model.fit(X, y)
-            y = self.model.predict(X)  # update target Q
+        # Q targets
+        y = r.copy()
 
-        self.fitted = True
-        print("[FQI] Training completed.")
+        print(f"[INFO] FQI training: {len(df)} samples")
 
-    # -------------------------------------------
-    def select_action(self, state_N):
-        best_q = -1e18
+        for it in range(iterations):
+            print(f"[FQI] iteration {it+1}/{iterations}")
+
+            # ---- iteration 1: Q(s’) = 0 ----
+            if it == 0:
+                y_target = r.copy()
+            else:
+                # estimate Q(s', a')
+                q_next = []
+                for i in range(len(s2)):
+                    best_q = -1e9
+                    for u2 in self.release_levels:
+                        for e2 in self.mitigation_levels:
+                            q_val = self.model.predict([[s2[i], u2, e2]])[0]
+                            best_q = max(best_q, q_val)
+                    q_next.append(best_q)
+
+                q_next = np.array(q_next)
+                y_target = r + self.gamma * q_next
+
+            # fit model
+            self.model.fit(X, y_target)
+            self.fitted = True
+
+        print("[INFO] FQI training completed!")
+
+    def save(self, path="outputs/fqi_release_lead.pkl"):
+        joblib.dump(self, path)
+        print(f"[INFO] Saved FQI model → {path}")
+
+    @staticmethod
+    def load(path="outputs/fqi_release_lead.pkl"):
+        return joblib.load(path)
+
+    def select_action(self, state):
+        """Returns tuple: (release, mitigation)"""
+        if isinstance(state, (tuple, list, np.ndarray)):
+            state_N = float(state[0])
+        else:
+            state_N = float(state)
+
+        best_q = -1e9
         best_pair = (0, 0)
 
         for u in self.release_levels:
