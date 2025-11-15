@@ -1,25 +1,14 @@
 """
 MPC Simulation with Dynamic Stable-Growth Target
 ------------------------------------------------
-Uses real population data (1982–2024) from USFWS/NPS.
-Target starts at 600 and gradually approaches K=700.
-"""
-import sys,os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-"""
-MPC Simulation with Forward-Looking Dynamic Target (N0=566)
------------------------------------------------------------
-Start from real 2024 observation (566) and track dynamic target 600→700.
-Represents future-oriented population management planning.
-"""
-
-"""
-MPC Simulation with Forward-Looking Dynamic Target (N0=566, Projection to 2050)
 -------------------------------------------------------------------------------
 Start from 2024 observed population (566) and simulate 30 years ahead.
 Produces both real-aligned and future-projected figures.
 """
+import sys,os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 
 import numpy as np
 import pandas as pd

@@ -1,7 +1,5 @@
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import sys, os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.rl.fqi_2d import FQI2D
 from src.rl.condor_env_2d import Condor2DEnv
@@ -16,10 +14,10 @@ def extract_N(x):
 
 
 def main():
-    # 1. 加载训练好的 FQI2D 模型
+    # load model
     fqi = FQI2D.load("outputs/fqi_release_lead.pkl")
 
-    # 2. 初始化环境
+    
     N0 = 566
     env = Condor2DEnv(N0=N0)
 
@@ -30,10 +28,10 @@ def main():
     actions_release = []
     actions_mitig = []
 
-    # 3. reset 环境
+    # reset environment
     state, _ = env.reset()
 
-    # 4. 仿真
+    # simulation
     for t in range(H):
         year = years[t]
 
@@ -48,7 +46,7 @@ def main():
 
         state = next_state
 
-    # 5. 打印结果
+    # print result
     print("\n[INFO] Population trajectory:", pops)
     print("\n[INFO] Actions (release, mitigation):")
     for y, u, e in zip(years, actions_release, actions_mitig):
@@ -56,7 +54,7 @@ def main():
 
     os.makedirs("outputs", exist_ok=True)
 
-    # 6. 画种群曲线
+    # plot polulation curve
     plt.figure(figsize=(12, 6))
     plt.plot(years, pops, "o--", label="FQI Population")
     plt.axhline(650, linestyle="--", color="orange", label="Target 650")
@@ -68,7 +66,7 @@ def main():
     plt.savefig("outputs/fig_rl_2d_target_projection.png", dpi=300)
     plt.show()
 
-    # 7. 画放归动作曲线
+    # plot release curve
     plt.figure(figsize=(12, 5))
     plt.plot(years, actions_release, "o-", color="blue", label="Release (u_t)")
     plt.xlabel("Year")
@@ -79,7 +77,7 @@ def main():
     plt.savefig("outputs/fig_rl_2d_actions_release.png", dpi=300)
     plt.show()
 
-    # 8. 画治理动作曲线
+    # plot lead curve
     plt.figure(figsize=(12, 5))
     plt.plot(years, actions_mitig, "o-", color="green", label="Mitigation (e_t)")
     plt.xlabel("Year")
